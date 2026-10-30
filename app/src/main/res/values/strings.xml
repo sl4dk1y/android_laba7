@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">laba7</string>
+    <string name="compose_hello">Hello Compose!</string>
+</resources>
