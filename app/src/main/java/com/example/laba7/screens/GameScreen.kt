@@ -1,10 +1,16 @@
 package com.example.laba7.screens
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -19,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import kotlin.random.Random
 
 @Composable
@@ -37,7 +45,29 @@ fun GameScreen(onBack: () -> Unit) {
     var target by rememberSaveable { mutableIntStateOf(Random.nextInt(1, 11)) }
     var input by rememberSaveable { mutableStateOf("") }
     var outcome by rememberSaveable { mutableStateOf<GuessOutcome?>(null) }
+    var torchCameraId by remember { mutableStateOf<String?>(null) }
+    var torchMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val won = outcome == GuessOutcome.CORRECT
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            torchCameraId = enableTorch(context)
+            torchMessage = if (torchCameraId != null) {
+                "Фонарик включён"
+            } else {
+                "На устройстве не найден доступный фонарик"
+            }
+        } else {
+            torchMessage = "Разрешение на камеру не выдано — фонарик не включён"
+        }
+    }
+
+    DisposableEffect(context) {
+        onDispose {
+            torchCameraId?.let { setTorch(context, it, enabled = false) }
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -71,20 +101,63 @@ fun GameScreen(onBack: () -> Unit) {
                 } else MaterialTheme.colorScheme.primary
             )
         }
+        torchMessage?.let { message ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = message,
+                color = if (torchCameraId != null) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error
+            )
+        }
         Spacer(Modifier.height(12.dp))
         if (!won) {
             Button(onClick = {
                 outcome = evaluateGuess(input, target)
                 if (outcome == GuessOutcome.INCORRECT) vibrateBriefly(context)
+                if (outcome == GuessOutcome.CORRECT) {
+                    val hasCameraPermission = ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.CAMERA
+                    ) == PackageManager.PERMISSION_GRANTED
+                    if (hasCameraPermission) {
+                        torchCameraId = enableTorch(context)
+                        torchMessage = if (torchCameraId != null) {
+                            "Фонарик включён"
+                        } else {
+                            "На устройстве не найден доступный фонарик"
+                        }
+                    } else {
+                        permissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                }
             }, modifier = Modifier.fillMaxWidth()) { Text("Проверить") }
         } else {
             Button(onClick = {
+                torchCameraId?.let { setTorch(context, it, enabled = false) }
+                torchCameraId = null
+                torchMessage = null
                 target = Random.nextInt(1, 11)
                 input = ""
                 outcome = null
             }, modifier = Modifier.fillMaxWidth()) { Text("Новая игра") }
         }
         OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
+    }
+}
+
+private fun enableTorch(context: Context): String? = runCatching {
+    val cameraManager = context.getSystemService(CameraManager::class.java) ?: return null
+    val cameraId = cameraManager.cameraIdList.firstOrNull { id ->
+        cameraManager.getCameraCharacteristics(id)
+            .get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+    } ?: return null
+    cameraManager.setTorchMode(cameraId, true)
+    cameraId
+}.getOrNull()
+
+private fun setTorch(context: Context, cameraId: String, enabled: Boolean) {
+    runCatching {
+        context.getSystemService(CameraManager::class.java)?.setTorchMode(cameraId, enabled)
     }
 }
 
